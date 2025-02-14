@@ -185,6 +185,9 @@ static void Green_LED_Controller_Task( void *pvParameters );
 static void Red_LED_Controller_Task( void *pvParameters );
 static void Amber_LED_Controller_Task( void *pvParameters );
 static void Init_Traffic_Light();
+static void Init_Potentiometer();
+static void Init_ADC1();
+static void Init_PC3();
 
 xQueueHandle xQueue_handle = 0;
 
@@ -201,6 +204,9 @@ int main(void)
 
 	/* Initialize Traffic Light */
 	Init_Traffic_Light();
+
+	/* Initialize Potentiometer */
+	Init_Potentiometer();
 
 	/* Configure the system ready to run the demo.  The clock configuration
 	can be done here if it was not done before main() was called. */
@@ -249,7 +255,63 @@ static void Init_Traffic_Light()
 	GPIO_Init(GPIOC, &GPIO_TrafficLight_InitStruct);
 }
 
+/*-----------------------------------------------------------*/
 
+/* Initialize the red, amber, and green LEDs for the traffic light.
+ * These three lights will correspond to GPIO Pins PC0, PC1, PC2.
+ */
+static void Init_Potentiometer()
+{
+	Init_PC3(); // This is the GPIO pin that will be reading the potentiometer's values
+	Init_ADC1();
+}
+
+/*-----------------------------------------------------------*/
+
+/* Initialize the ADC1
+ */
+static void Init_ADC1()
+{
+	/* Enable Clock */
+	RCC_APB2PeriphClockCmd(RCC_APB2Periph_ADC1, ENABLE);
+
+	ADC_InitTypeDef ADC_InitStruct;
+
+	// Configuration
+	ADC_InitStruct.ADC_ContinuousConvMode = ENABLE;
+	ADC_InitStruct.ADC_Resolution = ADC_Resolution_12b;
+	ADC_InitStruct.ADC_DataAlign = ADC_DataAlign_Right;
+    ADC_InitStruct.ADC_ScanConvMode = DISABLE;
+    ADC_InitStruct.ADC_ExternalTrigConvEdge = ADC_ExternalTrigConvEdge_None;
+
+	/* Enable ADC1 */
+	ADC_Init(ADC1, &ADC_InitStruct);
+
+	/* Channel Setup */
+	ADC_RegularChannelConfig(ADC1, ADC_Channel_0, 1, ADC_SampleTime_3Cycles);
+	ADC_Cmd(ADC1, ENABLE);
+
+	ADC_SoftwareStartConv(ADC1);
+
+}
+
+/*-----------------------------------------------------------*/
+
+/* Initialize the PC3 as the reader for the ADC
+ */
+static void Init_PC3()
+{
+
+	GPIO_InitTypeDef GPIO_PC3_InitStruct;
+
+	// Configuration
+	GPIO_PC3_InitStruct.GPIO_Pin = GPIO_Pin_3;
+	GPIO_PC3_InitStruct.GPIO_Mode = GPIO_Mode_AN;
+	GPIO_PC3_InitStruct.GPIO_PuPd = GPIO_PuPd_NOPULL;
+
+	/* Enable GPIO Pins */
+	GPIO_Init(GPIOC, &GPIO_PC3_InitStruct);
+}
 
 /*-----------------------------------------------------------*/
 
@@ -260,8 +322,12 @@ static void TrafficLight_Manager_Task( void *pvParameters )
 	 * Should be constant for amber, but variable for red and green tasks
 	 */
 	uint16_t ticks_to_wait = 5000;
+
+	uint16_t potentiometer_reading = 0;
 	while(1)
 	{
+//		while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
+//			potentiometer_reading = ADC_GetConversionValue(ADC1); //This doesn't seem to be working - I'm consistently getting a value of 65520
 		if(tx_data == green)
 		{
 			GPIO_SetBits(GPIOC, green_light);
@@ -434,4 +500,3 @@ static void prvSetupHardware( void )
 	/* TODO: Setup the clocks, etc. here, if they were not configured before
 	main() was called. */
 }
-
