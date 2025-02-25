@@ -1,4 +1,4 @@
-/*
+                               /*
     FreeRTOS V9.0.0 - Copyright (C) 2016 Real Time Engineers Ltd.
     All rights reserved
 
@@ -165,10 +165,12 @@ functionality.
 /* Traffic Light LEDs */
 #define green_light GPIO_Pin_0
 #define amber_light GPIO_Pin_1
-#define red_light GPIO_Pin_2
+#define red_light 	GPIO_Pin_2
 
-
-
+/* Shift Registers (Cars) */
+#define Shift_Register_Clock	GPIO_Pin_7
+#define Shift_Register_Data		GPIO_Pin_6
+#define Shift_Register_Reset	GPIO_Pin_8
 
 /*
  * TODO: Implement this function for any hardware specific clock configuration
@@ -180,14 +182,28 @@ static void prvSetupHardware( void );
  * The queue send and receive tasks as described in the comments at the top of
  * this file.
  */
-static void TrafficLight_Manager_Task( void *pvParameters );
+/********* PROTOTYPES *********/
+
+// Traffic Lights
+static void Traffic_Manager_Task( void *pvParameters );
 static void Green_LED_Controller_Task( void *pvParameters );
 static void Red_LED_Controller_Task( void *pvParameters );
 static void Amber_LED_Controller_Task( void *pvParameters );
 static void Init_Traffic_Light();
+
+// Potentiometer
 static void Init_Potentiometer();
 static void Init_ADC1();
 static void Init_PC3();
+
+// Shift Register
+static void GPIO_Init_Shift_Register(void);
+static void GPIO_Reset_Shift_Register(void);
+//static void GPIO_ResetBits(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin);
+//static void GPIO_SetBits(GPIO_TypeDef* GPIOx, uint16_t GPIO_Pin);
+static void GPIO_Shift_Register_bit_On(void);
+static void GPIO_Shift_Register_bit_Off(void);
+static void TrafficFlow_Control_Task( void *pvParameters );
 
 xQueueHandle xQueue_handle = 0;
 
@@ -208,23 +224,23 @@ int main(void)
 	/* Initialize Potentiometer */
 	Init_Potentiometer();
 
+	/* Initialize Shift Register */
+	GPIO_Init_Shift_Register();
+	GPIO_Reset_Shift_Register();
+
 	/* Configure the system ready to run the demo.  The clock configuration
 	can be done here if it was not done before main() was called. */
 	prvSetupHardware();
 
 
-	/* Create the queue used by the queue send and queue receive tasks.
-	http://www.freertos.org/a00116.html */
-	xQueue_handle = xQueueCreate( 	mainQUEUE_LENGTH,		/* The number of items the queue can hold. */
-							sizeof( uint16_t ) );	/* The size of each item the queue holds. */
-
 	/* Add to the registry, for the benefit of kernel aware debugging. */
 	vQueueAddToRegistry( xQueue_handle, "MainQueue" );
 
-	xTaskCreate( TrafficLight_Manager_Task, "Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
-	xTaskCreate( Red_LED_Controller_Task, "Red_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
-	xTaskCreate( Green_LED_Controller_Task, "Green_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
-	xTaskCreate( Amber_LED_Controller_Task, "Amber_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+//	xTaskCreate( TrafficFlow_Control_Task, "Traffic Flow Control", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+	xTaskCreate( Traffic_Manager_Task, "Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+//	xTaskCreate( Red_LED_Controller_Task, "Red_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+//	xTaskCreate( Green_LED_Controller_Task, "Green_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+//	xTaskCreate( Amber_LED_Controller_Task, "Amber_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -315,127 +331,91 @@ static void Init_PC3()
 
 /*-----------------------------------------------------------*/
 
-static void TrafficLight_Manager_Task( void *pvParameters )
+static void Traffic_Manager_Task( void *pvParameters )
 {
-	uint16_t tx_data = green;
-	/* This is the number of ticks to wait for each task.
-	 * Should be constant for amber, but variable for red and green tasks
-	 */
-	uint16_t ticks_to_wait = 5000;
 
 	uint16_t potentiometer_reading = 0;
-	while(1)
-	{
-//		while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
-//			potentiometer_reading = ADC_GetConversionValue(ADC1); //This doesn't seem to be working - I'm consistently getting a value of 65520
-		if(tx_data == green)
-		{
-			GPIO_SetBits(GPIOC, green_light);
-			ticks_to_wait = 5000;
-		}
-		if(tx_data == amber)
-		{
-			GPIO_SetBits(GPIOC, amber_light);
-			ticks_to_wait = 1000;
-		}
-		if(tx_data == red)
-		{
-			GPIO_SetBits(GPIOC, red_light);
-			ticks_to_wait = 5000;
-		}
+	//		while (ADC_GetFlagStatus(ADC1, ADC_FLAG_EOC) == RESET);
+	//			potentiometer_reading = ADC_GetConversionValue(ADC1); //This doesn't seem to be working - I'm consistently getting a value of 65520
+	int count = 0;
+    while(1)
+    {
+    	//printf("iteration %d\n", count);
+//        // Green Light ON
+//        GPIO_SetBits(GPIOC, green_light);
+//        GPIO_ResetBits(GPIOC, amber_light | red_light);
+//        vTaskDelay(pdMS_TO_TICKS(500)); // 5 seconds
+//
+//        // Amber Light ON
+//        GPIO_SetBits(GPIOC, amber_light);
+//        GPIO_ResetBits(GPIOC, green_light | red_light);
+//        vTaskDelay(pdMS_TO_TICKS(500)); // 1 second
+//
+//        // Red Light ON
+//        GPIO_SetBits(GPIOC, red_light);
+//        GPIO_ResetBits(GPIOC, green_light | amber_light);
+//        vTaskDelay(pdMS_TO_TICKS(500)); // 5 seconds
 
-		if( xQueueSend(xQueue_handle, &tx_data, ticks_to_wait))
-		{
-			printf("Manager: %u ON!\n", tx_data);
-			if(++tx_data == 3)
-				tx_data = 0;
-			vTaskDelay(ticks_to_wait); // This is in control of how many ticks before the next task is sent?
-		}
-		else
-		{
-			printf("Manager Failed!\n");
-		}
-	}
+    	GPIO_Shift_Register_bit_On();
+    	vTaskDelay(pdMS_TO_TICKS(500));
+    	GPIO_Shift_Register_bit_Off();
+    	vTaskDelay(pdMS_TO_TICKS(500));
+    	GPIO_Shift_Register_bit_Off();
+    	vTaskDelay(pdMS_TO_TICKS(500));
+    	GPIO_Shift_Register_bit_Off();
+    	vTaskDelay(pdMS_TO_TICKS(500));
+
+
+    }
 }
 
 
-/*-----------------------------------------------------------*/
 
-static void Green_LED_Controller_Task( void *pvParameters )
+/***********************************************************/
+/*				SHIFT REGISTER FUNCTIONS				   */
+/***********************************************************/
+
+static void GPIO_Init_Shift_Register(void)
 {
-	uint16_t rx_data;
-	while(1)
-	{
-		if(xQueueReceive(xQueue_handle, &rx_data, 500))
-		{
-			if(rx_data == green)
-			{
-				GPIO_ResetBits(GPIOC, red_light);
-				printf("Red Off.\n");
-			}
-			else
-			{
-				if( xQueueSend(xQueue_handle,&rx_data,1000))
-					{
-						printf("GreenTask GRP (%u).\n", rx_data); // Got wrong Package
-						vTaskDelay(500);
-					}
-			}
-		}
-	}
+	GPIO_InitTypeDef GPIO_ShiftRegister_InitStruct;
+	/* Enable the GPIO_LED Clock */
+	RCC_AHB1PeriphClockCmd(RCC_AHB1Periph_GPIOC, ENABLE);
+	/* Configure the GPIO_LED pin */
+	GPIO_ShiftRegister_InitStruct.GPIO_Pin = Shift_Register_Reset | Shift_Register_Clock | Shift_Register_Data;
+	GPIO_ShiftRegister_InitStruct.GPIO_Mode = GPIO_Mode_OUT;
+	GPIO_ShiftRegister_InitStruct.GPIO_OType = GPIO_OType_PP;
+	GPIO_ShiftRegister_InitStruct.GPIO_PuPd = GPIO_PuPd_UP;
+	GPIO_ShiftRegister_InitStruct.GPIO_Speed = GPIO_Speed_50MHz;
+	GPIO_Init(GPIOC, &GPIO_ShiftRegister_InitStruct);
 }
 
-/*-----------------------------------------------------------*/
-
-static void Red_LED_Controller_Task( void *pvParameters )
+static void GPIO_Reset_Shift_Register(void)
 {
-	uint16_t rx_data;
-	while(1)
-	{
-		if(xQueueReceive(xQueue_handle, &rx_data, 500))
-		{
-			if(rx_data == red)
-			{
-				GPIO_ResetBits(GPIOC, amber_light);
-				printf("Amber off.\n");
-			}
-			else
-			{
-				if( xQueueSend(xQueue_handle,&rx_data,1000))
-					{
-						printf("RedTask GRP (%u).\n", rx_data); // Got wrong Package
-						vTaskDelay(500);
-					}
-			}
-		}
-	}
+	GPIO_ResetBits(GPIOC, Shift_Register_Reset);
+	for (int i = 0; i < 10; i++);		// Wait for 10 clock cycles
+	GPIO_SetBits(GPIOC, Shift_Register_Reset);
 }
 
-
-/*-----------------------------------------------------------*/
-
-static void Amber_LED_Controller_Task( void *pvParameters )
+static void GPIO_Shift_Register_bit_On(void)
 {
-	uint16_t rx_data;
-	while(1)
-	{
-		if(xQueueReceive(xQueue_handle, &rx_data, 500))
-		{
-			if(rx_data == amber)
-			{
-				GPIO_ResetBits(GPIOC, green_light);
-				printf("Amber Off.\n");
-			}
-			else
-			{
-				if( xQueueSend(xQueue_handle,&rx_data,1000))
-					{
-						printf("AmberTask GRP (%u).\n", rx_data); // Got wrong Package
-						vTaskDelay(500);
-					}
-			}
-		}
-	}
+	// Reset the data pin
+	GPIO_SetBits(GPIOC, Shift_Register_Data);
+	// Generate a pulse on the clock pin
+	GPIO_ResetBits(GPIOC, Shift_Register_Clock);
+	for (int i = 0; i < 5; i++);		// Wait for 5 clock cycles
+	GPIO_SetBits(GPIOC, Shift_Register_Clock);
+	printf("A car was added to the intersection\n");
+}
+
+static void GPIO_Shift_Register_bit_Off(void)
+{
+	// Reset the data pin
+	GPIO_ResetBits(GPIOC, Shift_Register_Data);
+	// Generate a pulse on the clock pin
+	GPIO_ResetBits(GPIOC, Shift_Register_Clock);
+	for (int i = 0; i < 5; i++);		// Wait for 5 clock cycles
+	GPIO_SetBits(GPIOC, Shift_Register_Clock);
+	printf("No car at this time!\n");
 }
 
 
