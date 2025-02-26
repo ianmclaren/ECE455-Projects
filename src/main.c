@@ -75,6 +75,11 @@ static uint16_t getTrafficGap(TrafficRate rate);
 
 xQueueHandle xQueue_handle = 0;
 xQueueHandle xTrafficRateQueue = 0; //Queue used to pass the current traffic rate between tasks
+xQueueHandle xTrafficLightColourQueue = 0;
+
+//Timer for the traffic light
+//static void vTrafficLightTimerCallback( xTimerHandle timer );
+//xTimerHandle xTrafficLightTimer = 0;
 
 
 /*-----------------------------------------------------------*/
@@ -95,14 +100,18 @@ int main(void)
 	can be done here if it was not done before main() was called. */
 	prvSetupHardware();
 
-
     /* Setup Queues */
-	xTrafficRateQueue = xQueueCreate(mainQUEUE_LENGTH, sizeof(TrafficRate));
+	xTrafficRateQueue = xQueueCreate(1, sizeof(TrafficRate));
+	xTrafficLightColourQueue = xQueueCreate(1, sizeof(uint16_t));
 
 	/* Setup Tasks */
 	xTaskCreate( TrafficRate_Adjustment_Task, "Traffic Rate Adjustment", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
 	xTaskCreate( Traffic_Manager_Task, "Traffic Flow Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
 	xTaskCreate( TrafficLight_Manager_Task, "Traffic Light Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+
+	/* Setup Timer */
+//	TimerHandle_t xTrafficLightTimer = xTimerCreate("Traffic Light Timer", pdMS_TO_TICKS(5000), pdFALSE, (void *)0, vTrafficLightTimerCallback);
+//	xTimerStart(xTrafficLightTimer, 0);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -178,7 +187,7 @@ static uint16_t getTrafficLightWaitTime(TrafficRate traffic_rate, uint16_t curre
 				case VERY_HEAVY:
 					return 5000;
 				default:
-					return 5000;
+					return 6000;
 			}
 		case red:
 			switch (traffic_rate) {
@@ -191,7 +200,7 @@ static uint16_t getTrafficLightWaitTime(TrafficRate traffic_rate, uint16_t curre
 				case VERY_HEAVY:
 					return 2500;
 				default:
-					return 2500;
+					return 2000;
 			}
 		default:
 			return 1000;
@@ -215,6 +224,24 @@ static void TrafficLight_Manager_Task( void *pvParameters )
         vTaskDelay(pdMS_TO_TICKS(light_time_to_wait));
     }
 }
+
+/*-----------------------------------------------------------*/
+
+//static void vTrafficLightTimerCallback( xTimerHandle timer ){
+//	uint16_t traffic_light_colour;
+//	TrafficRate traffic_rate;
+//	uint16_t time_to_wait;
+//	xQueueReceive(xTrafficLightColourQueue, &traffic_light_colour, 100);
+//	xQueueReceive(xTrafficRateQueue, &traffic_rate, 50);
+//
+//	traffic_light_colour = switchTrafficLightColour(traffic_light_colour);
+//	time_to_wait = getTrafficLightWaitTime(traffic_rate, traffic_light_colour);
+//
+//	xTimerChangePeriod(xTrafficLightTimer, pdMS_TO_TICKS(time_to_wait), 0);
+//
+//	xQueueSend(xTrafficLightColourQueue, &traffic_light_colour, 100);
+//	xQueueSend(xTrafficRateQueue, &traffic_rate, 50);
+//}
 
 /***********************************************************/
 /*				POTENTIOMETER FUNCTIONS				       */
@@ -323,7 +350,7 @@ static uint16_t getTrafficGap(TrafficRate rate)
 		case VERY_HEAVY:
 			return 0;
 		default:
-			return 5;
+			return 12;
 	}
 }
 
@@ -346,7 +373,6 @@ static void TrafficRate_Adjustment_Task( void *pvParameters ) //TODO: Test
 
 static void Traffic_Manager_Task( void *pvParameters )
 {
-	uint16_t potentiometer_reading = 0;
 	TrafficRate traffic_rate = HEAVY;
 	uint16_t traffic_gap = 3;
     while(1)
