@@ -33,7 +33,6 @@
 
 // Define the traffic rate levels
 typedef enum {
-    VERY_LIGHT,
     LIGHT,
     MEDIUM,
     HEAVY,
@@ -55,6 +54,8 @@ static void prvSetupHardware( void );
 // Traffic Lights
 static void TrafficLight_Manager_Task( void *pvParameters );
 static void Init_Traffic_Light();
+static uint16_t switchTrafficLightColour(uint16_t current_colour);
+static uint16_t getTrafficLightWaitTime(TrafficRate traffic_rate, uint16_t current_colour);
 
 // Traffic Rate
 static void Init_Potentiometer();
@@ -73,14 +74,13 @@ static void GPIO_Shift_Register_bit_Off(void);
 static uint16_t getTrafficGap(TrafficRate rate);
 
 xQueueHandle xQueue_handle = 0;
-xQueueHandle xFlowAdjustmentQueue = 0;
+xQueueHandle xTrafficRateQueue = 0; //Queue used to pass the current traffic rate between tasks
 
 
 /*-----------------------------------------------------------*/
 
 int main(void)
 {
-
 	/* Initialize Traffic Light */
 	Init_Traffic_Light();
 
@@ -97,10 +97,11 @@ int main(void)
 
 
     /* Setup Queues */
-	xFlowAdjustmentQueue = xQueueCreate(mainQUEUE_LENGTH, sizeof(uint16_t));
+	xTrafficRateQueue = xQueueCreate(mainQUEUE_LENGTH, sizeof(TrafficRate));
 
+	/* Setup Tasks */
+	xTaskCreate( TrafficRate_Adjustment_Task, "Traffic Rate Adjustment", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
 	xTaskCreate( Traffic_Manager_Task, "Traffic Flow Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
-	xTaskCreate( TrafficRate_Adjustment_Task, "Traffic Flow Adjustment", configMINIMAL_STACK_SIZE, NULL, 2, NULL); //TODO: Update Priority?
 	xTaskCreate( TrafficLight_Manager_Task, "Traffic Light Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
 
 	/* Start the tasks and timer running. */
@@ -140,27 +141,78 @@ static void Init_Traffic_Light()
 
 /*-----------------------------------------------------------*/
 
+static uint16_t switchTrafficLightColour( uint16_t current_colour )
+{
+	switch (current_colour) {
+		case green:
+			GPIO_SetBits(GPIOC, amber_light);
+			GPIO_ResetBits(GPIOC, green_light | red_light);
+			return amber;
+		case amber:
+			GPIO_SetBits(GPIOC, red_light);
+			GPIO_ResetBits(GPIOC, green_light | amber_light);
+			return red;
+			break;
+		case red:
+			GPIO_SetBits(GPIOC, green_light);
+			GPIO_ResetBits(GPIOC, amber_light | red_light);
+			return green;
+		default:
+			return 3;
+	}
+}
+
+/*-----------------------------------------------------------*/
+
+static uint16_t getTrafficLightWaitTime(TrafficRate traffic_rate, uint16_t current_colour)
+{
+	switch (current_colour){
+		case green:
+			switch (traffic_rate) {
+				case LIGHT:
+					return 2500;
+				case MEDIUM:
+					return 3000;
+				case HEAVY:
+					return 4000;
+				case VERY_HEAVY:
+					return 5000;
+				default:
+					return 5000;
+			}
+		case red:
+			switch (traffic_rate) {
+				case LIGHT:
+					return 5000;
+				case MEDIUM:
+					return 4000;
+				case HEAVY:
+					return 3000;
+				case VERY_HEAVY:
+					return 2500;
+				default:
+					return 2500;
+			}
+		default:
+			return 1000;
+	}
+}
+
+/*-----------------------------------------------------------*/
+
 static void TrafficLight_Manager_Task( void *pvParameters )
 {
 	uint16_t light_time_to_wait = 5000; // Default time to wait
-	uint16_t potentiometer_reading = 0;
+	uint16_t traffic_light_state = red;
+	TrafficRate traffic_rate = HEAVY;
     while(1)
     {
-    	potentiometer_reading = readPotentiometer();
-        // Green Light ON
-        GPIO_SetBits(GPIOC, green_light);
-        GPIO_ResetBits(GPIOC, amber_light | red_light);
-        vTaskDelay(pdMS_TO_TICKS(light_time_to_wait)); // TODO: Use time to wait based on potentiometer reading
+    	xQueueReceive(xTrafficRateQueue, &traffic_rate, 50);
+    	traffic_light_state = switchTrafficLightColour(traffic_light_state);
+    	light_time_to_wait = getTrafficLightWaitTime(traffic_rate, traffic_light_state);
+    	xQueueSend(xTrafficRateQueue, &traffic_rate, 50);
 
-        // Amber Light ON
-        GPIO_SetBits(GPIOC, amber_light);
-        GPIO_ResetBits(GPIOC, green_light | red_light);
-        vTaskDelay(pdMS_TO_TICKS(1000)); // 1 second
-
-        // Red Light ON
-        GPIO_SetBits(GPIOC, red_light);
-        GPIO_ResetBits(GPIOC, green_light | amber_light);
-        vTaskDelay(pdMS_TO_TICKS(light_time_to_wait)); // TODO: Use time to wait based on potentiometer reading
+        vTaskDelay(pdMS_TO_TICKS(light_time_to_wait));
     }
 }
 
@@ -243,9 +295,8 @@ static uint16_t readPotentiometer()
  * */
 static TrafficRate getTrafficRate(uint16_t read_adc_value)
 {
-	if (read_adc_value < 200) {
-		return VERY_LIGHT;
-	} else if (read_adc_value >= 200 && read_adc_value < 1400) {
+
+	if (read_adc_value < 1400) {
 		return LIGHT;
 	} else if (read_adc_value >= 1400 && read_adc_value < 2600) {
 		return MEDIUM;
@@ -263,8 +314,6 @@ static TrafficRate getTrafficRate(uint16_t read_adc_value)
 static uint16_t getTrafficGap(TrafficRate rate)
 {
 	switch (rate) {
-		case VERY_LIGHT:
-			return 5;
 		case LIGHT:
 			return 3;
 		case MEDIUM:
@@ -283,13 +332,13 @@ static uint16_t getTrafficGap(TrafficRate rate)
 static void TrafficRate_Adjustment_Task( void *pvParameters ) //TODO: Test
 {
 	uint16_t potentiometer_reading = 0;
-	//FlowRateOption newFlowRate; //TODO: set new FlowRateOption struct w/ Values
+	TrafficRate new_traffic_rate = HEAVY;
 	while(1){
-		xQueueReceive(xFlowAdjustmentQueue, &potentiometer_reading, portMAX_DELAY);
+		xQueueReceive(xTrafficRateQueue, &new_traffic_rate, portMAX_DELAY); //block in the case of an emtpy queue, until a new value is received
 		potentiometer_reading = readPotentiometer();
-		//TODO: adjust newFlowRate to be light, medium, or high
-		xQueueSend(xFlowAdjustmentQueue, &potentiometer_reading, 100); // Send flow rate to queue
-		vTaskDelay(pdMS_TO_TICKS(500));
+		new_traffic_rate = getTrafficRate(potentiometer_reading);
+		xQueueSend(xTrafficRateQueue, &new_traffic_rate, 50); // Send flow rate to queue
+		vTaskDelay(pdMS_TO_TICKS(100));
 	}
 }
 
@@ -298,13 +347,15 @@ static void TrafficRate_Adjustment_Task( void *pvParameters ) //TODO: Test
 static void Traffic_Manager_Task( void *pvParameters )
 {
 	uint16_t potentiometer_reading = 0;
-	TrafficRate flow_rate = VERY_LIGHT;
-	uint16_t traffic_gap = 5;
+	TrafficRate traffic_rate = HEAVY;
+	uint16_t traffic_gap = 3;
     while(1)
     {
-    	potentiometer_reading = readPotentiometer();
-    	flow_rate = getTrafficRate(potentiometer_reading);
-    	traffic_gap = getTrafficGap(flow_rate);
+    	xQueueReceive(xTrafficRateQueue, &traffic_rate, 50); // Get flow rate from queue
+
+    	traffic_gap = getTrafficGap(traffic_rate);
+
+    	xQueueSend(xTrafficRateQueue, &traffic_rate, 50); // Send flow rate back to queue
 
     	GPIO_Shift_Register_bit_On(); // Add a car
     	vTaskDelay(pdMS_TO_TICKS(500));
