@@ -191,6 +191,35 @@ functionality.
 //#define TASK3_PERIOD         500
 
 
+/*-----------------------------------------------------------*/
+/* Defining Structures Recommended in Slides and Lab Manual */
+/*-----------------------------------------------------------*/
+
+typedef enum {PERIODIC, APERIODIC} task_type;
+
+typedef struct dd_task {
+	TaskHandle_t t_handle;
+	task_type type;
+	uint32_t task_id;
+	uint32_t release_time;
+	uint32_t absolute_deadline;
+	uint32_t completion_time;
+} dd_task;
+
+typedef struct dd_task_list {
+	dd_task task;
+	struct dd_task_list *next_task;
+} dd_task_list;
+
+/* Interface Function Declarations for DDS */
+static void create_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline);
+static void delete_dd_task(uint32_t task_id);
+
+//The three declarations below are recommended in the lab manual, but fail the build
+//static **dd_task_list get_active_dd_task_list(void);
+//static **dd_task_list get_complete_dd_task_list(void);
+//static **dd_task_list get_overdue_dd_task_list(void);
+
 /*
  * TODO: Implement this function for any hardware specific clock configuration
  * that was not already performed before main() was called.
