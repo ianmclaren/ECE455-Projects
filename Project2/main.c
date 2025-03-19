@@ -156,10 +156,24 @@ functionality.
 #define red  	2
 #define blue  	3
 
-#define amber_led	LED3
+
+/*-----------------------------------------------------------*/
+/* Defining values used in program execution */
+/*-----------------------------------------------------------*/
 #define green_led	LED4
 #define red_led		LED5
 #define blue_led	LED6
+
+#define TASK1_ID  1
+#define TASK2_ID  2
+#define TASK3_ID  3
+
+//TASK PRIORITIES TODO: Find and define the correct values
+#define TASK_CREATION_PRIORITY        1
+#define DD_TASK_GENERATOR_PRIORITY    2
+#define TASK_EXECUTION_PRIORITY       0
+#define MONITOR_PRIORITY              0
+#define DD_TASK_SCHEDULER_PRIORITY    0
 
 /*-----------------------------------------------------------*/
 /* Defining Test Benches */
@@ -211,15 +225,6 @@ typedef struct dd_task_list {
 	struct dd_task_list *next_task;
 } dd_task_list;
 
-/* Interface Function Declarations for DDS */
-static void create_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline);
-static void delete_dd_task(uint32_t task_id);
-
-//The three declarations below are recommended in the lab manual, but fail the build
-//static **dd_task_list get_active_dd_task_list(void);
-//static **dd_task_list get_complete_dd_task_list(void);
-//static **dd_task_list get_overdue_dd_task_list(void);
-
 /*
  * TODO: Implement this function for any hardware specific clock configuration
  * that was not already performed before main() was called.
@@ -230,13 +235,30 @@ static void prvSetupHardware( void );
  * The queue send and receive tasks as described in the comments at the top of
  * this file.
  */
+
+/*-----------------------------------------------------------*/
+/* Defining Functions */
+/*-----------------------------------------------------------*/
 static void Manager_Task( void *pvParameters );
 static void Blue_LED_Controller_Task( void *pvParameters );
 static void Green_LED_Controller_Task( void *pvParameters );
-static void Red_LED_Controller_Task( void *pvParameters );
-static void Amber_LED_Controller_Task( void *pvParameters );
 
+static dd_task* create_dd_task( TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline );
+static void user_defined_task_1( void *pvParameters );
+static void delete_dd_task( uint32_t task_id );
+static void release_dd_task( dd_task *ddtask );
+
+static void DD_Task_Generator_1( void *pvParameters );
+
+//The three declarations below are recommended in the lab manual, but fail the build
+//static **dd_task_list get_active_dd_task_list(void);
+//static **dd_task_list get_complete_dd_task_list(void);
+//static **dd_task_list get_overdue_dd_task_list(void);
+
+/* HANDLES */
 xQueueHandle xQueue_handle = 0;
+
+TaskHandle_t dd_task_1_generator_handle = NULL;
 
 
 /*-----------------------------------------------------------*/
@@ -244,8 +266,7 @@ xQueueHandle xQueue_handle = 0;
 int main(void)
 {
 
-	/* Initialize LEDs */
-	STM_EVAL_LEDInit(amber_led);
+	/* Initialize LEDs needed for Project 2 */
 	STM_EVAL_LEDInit(green_led);
 	STM_EVAL_LEDInit(red_led);
 	STM_EVAL_LEDInit(blue_led);
@@ -257,17 +278,17 @@ int main(void)
 
 	/* Create the queue used by the queue send and queue receive tasks.
 	http://www.freertos.org/a00116.html */
-	xQueue_handle = xQueueCreate( 	mainQUEUE_LENGTH,		/* The number of items the queue can hold. */
-							sizeof( uint16_t ) );	/* The size of each item the queue holds. */
+//	xQueue_handle = xQueueCreate( 	mainQUEUE_LENGTH,		/* The number of items the queue can hold. */
+//							sizeof( uint16_t ) );	/* The size of each item the queue holds. */
+//
+//	/* Add to the registry, for the benefit of kernel aware debugging. */
+//	vQueueAddToRegistry( xQueue_handle, "MainQueue" );
 
-	/* Add to the registry, for the benefit of kernel aware debugging. */
-	vQueueAddToRegistry( xQueue_handle, "MainQueue" );
+//	xTaskCreate( Manager_Task, "Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
+//	xTaskCreate( Blue_LED_Controller_Task, "Blue_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+//	xTaskCreate( Green_LED_Controller_Task, "Green_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
 
-	xTaskCreate( Manager_Task, "Manager", configMINIMAL_STACK_SIZE, NULL, 2, NULL);
-	xTaskCreate( Blue_LED_Controller_Task, "Blue_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
-	xTaskCreate( Red_LED_Controller_Task, "Red_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
-	xTaskCreate( Green_LED_Controller_Task, "Green_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
-	xTaskCreate( Amber_LED_Controller_Task, "Amber_LED", configMINIMAL_STACK_SIZE, NULL, 1, NULL);
+	xTaskCreate(DD_Task_Generator_1, "DD Task 1 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_1_generator_handle);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -280,14 +301,11 @@ int main(void)
 
 static void Manager_Task( void *pvParameters )
 {
-	uint16_t tx_data = amber;
+	uint16_t tx_data = green;
 
 
 	while(1)
 	{
-
-		if(tx_data == amber)
-			STM_EVAL_LEDOn(amber_led);
 		if(tx_data == green)
 			STM_EVAL_LEDOn(green_led);
 		if(tx_data == red)
@@ -366,57 +384,66 @@ static void Green_LED_Controller_Task( void *pvParameters )
 
 /*-----------------------------------------------------------*/
 
-static void Red_LED_Controller_Task( void *pvParameters )
-{
-	uint16_t rx_data;
-	while(1)
-	{
-		if(xQueueReceive(xQueue_handle, &rx_data, 500))
-		{
-			if(rx_data == red)
-			{
-				vTaskDelay(250);
-				STM_EVAL_LEDOff(red_led);
-				printf("Red off.\n");
-			}
-			else
-			{
-				if( xQueueSend(xQueue_handle,&rx_data,1000))
-					{
-						printf("RedTask GRP (%u).\n", rx_data); // Got wrong Package
-						vTaskDelay(500);
-					}
-			}
-		}
-	}
-}
+static dd_task* create_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline){
+	dd_task *ddtask;
+	ddtask = (dd_task*)pvPortMalloc(sizeof(dd_task));
 
+	if(ddtask == NULL){
+		return NULL;
+	}
+
+	ddtask->t_handle = t_handle;
+	ddtask->type = type;
+	ddtask->task_id = task_id;
+	ddtask->absolute_deadline = absolute_deadline;
+
+	return ddtask;
+}
 
 /*-----------------------------------------------------------*/
 
-static void Amber_LED_Controller_Task( void *pvParameters )
+static void release_dd_task( dd_task *ddtask ){
+	//TODO: Implement
+	//Put dd_task on queue
+	//Put release on message queue
+}
+
+/*-----------------------------------------------------------*/
+
+static void DD_Task_Generator_1( void *pvParameters )
 {
-	uint16_t rx_data;
+	printf("DD_Task_Generator_1 Started\n");
+	TickType_t current_time;
+	dd_task *created_dd_task;
+
 	while(1)
 	{
-		if(xQueueReceive(xQueue_handle, &rx_data, 500))
-		{
-			if(rx_data == amber)
-			{
-				vTaskDelay(250);
-				STM_EVAL_LEDOff(amber_led);
-				printf("Amber Off.\n");
-			}
-			else
-			{
-				if( xQueueSend(xQueue_handle,&rx_data,1000))
-					{
-						printf("AmberTask GRP (%u).\n", rx_data); // Got wrong Package
-						vTaskDelay(500);
-					}
-			}
-		}
+		current_time = xTaskGetTickCount();
+
+		/* Creating the DD_Task */
+		created_dd_task = create_dd_task(NULL, PERIODIC, TASK1_ID, (current_time + TASK1_PERIOD)); //TODO: Create this function
+		xTaskCreate(user_defined_task_1, "dd_task", configMINIMAL_STACK_SIZE, (void*)created_dd_task, TASK_CREATION_PRIORITY, &(created_dd_task->t_handle));
+
+		//TODO: Suspend Task execution when DDS is created
+		//vTaskSuspend(created_dd_task->t_handle);
+
+		printf("dd_task_generator released task!\n");
+		//release_dd_task(created_dd_task); //TODO: Implement or remove and simply place task and message on queues here
+
+		// Wait for the Tasks's period before generating the task again
+		vTaskDelay(TASK1_PERIOD);
 	}
+}
+
+/*-----------------------------------------------------------*/
+
+static void user_defined_task_1( void *pvParameters )
+{
+	printf("User Defined Task 1 Started\n");
+	STM_EVAL_LEDOn(blue_led);
+	vTaskDelay(TASK1_EXECUTION_TIME); //TODO: Switch this to a while loop or timer?
+	STM_EVAL_LEDOff(blue_led);
+	//TODO: Update fields of dd_task? Or will this be handled in the scheduler?
 }
 
 
