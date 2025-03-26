@@ -172,7 +172,7 @@ functionality.
 #define DD_TASK_GENERATOR_PRIORITY    2
 #define TASK_EXECUTION_PRIORITY       0
 #define MONITOR_PRIORITY              0
-#define DD_TASK_SCHEDULER_PRIORITY    0
+#define DD_TASK_SCHEDULER_PRIORITY    3
 
 /*-----------------------------------------------------------*/
 /* Defining Test Benches */
@@ -219,13 +219,13 @@ typedef struct dd_task {
 	uint32_t completion_time;
 } dd_task;
 
-typedef struct dd_task_list {
+typedef struct dd_task_node_t {
 	dd_task task;
-	struct dd_task_list *next_task;
-} dd_task_list;
+	struct dd_task_node_t *next_task;
+} dd_task_node_t;
 
 // This is the enumerator for the different requests that can be sent to the DDS
-typedef enum {TASK_CREATED, GET_ACTIVE_lIST, GET_COMPLETED_LIST, GET_OVERDUE_LIST} request_type;
+typedef enum {TASK_CREATED, GET_ACTIVE_LIST, GET_COMPLETED_LIST, GET_OVERDUE_LIST} request_type;
 
 /*
  * TODO: Implement this function for any hardware specific clock configuration
@@ -252,6 +252,10 @@ static void release_dd_task( dd_task *ddtask );
 static void DD_Task_Generator_1( void *pvParameters );
 static void DD_Task_Generator_2( void *pvParameters );
 static void DD_Task_Generator_3( void *pvParameters );
+
+static dd_task_node_t *insert_dd_task_to_other_list( dd_task task, dd_task_node_t *head);
+static dd_task_node_t *insert_dd_task_to_active_list( dd_task task, dd_task_node_t *head);
+static void DD_Scheduler( void *pvParameters );
 
 //The three declarations below are recommended in the lab manual, but fail the build
 //static **dd_task_list get_active_dd_task_list(void);
@@ -298,8 +302,10 @@ int main(void)
 	xTask_Execution_Mutex = xSemaphoreCreateMutex();
 
 	xTaskCreate(DD_Task_Generator_1, "DD Task 1 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_1_generator_handle);
-	xTaskCreate(DD_Task_Generator_2, "DD Task 2 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_2_generator_handle);
+	//xTaskCreate(DD_Task_Generator_2, "DD Task 2 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_2_generator_handle);
 	//xTaskCreate(DD_Task_Generator_3, "DD Task 3 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_3_generator_handle);
+
+	xTaskCreate(DD_Scheduler, "DD Scheduler", configMINIMAL_STACK_SIZE, NULL, DD_TASK_SCHEDULER_PRIORITY, NULL);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -328,11 +334,11 @@ static dd_task* create_dd_task(TaskHandle_t t_handle, task_type type, uint32_t t
 /*-----------------------------------------------------------*/
 
 static void release_dd_task( dd_task *ddtask ){
-	request_type request_message = TASK_CREATED;
+	request_type request = TASK_CREATED;
 	//Put dd_task on queue
 	xQueueSend(dd_task_queue, (void *)ddtask, portMAX_DELAY);
 	//Put task_created onto request queue
-	xQueueSend(request_queue, &request_message, portMAX_DELAY);
+	xQueueSend(request_queue, &request, portMAX_DELAY);
 }
 
 /*-----------------------------------------------------------*/
@@ -389,24 +395,27 @@ static void DD_Task_Generator_2( void *pvParameters )
 
 /*-----------------------------------------------------------*/
 
-//static void DD_Task_Generator_3( void *pvParameters )
-//{
-//	printf("DD_Task_Generator_3 Started\n");
-//	TickType_t current_time;
-//	dd_task *created_dd_task;
-//
-//	while(1)
-//	{
-//		current_time = xTaskGetTickCount();
-//
-//		/* Creating the DD_Task */
-//		created_dd_task = create_dd_task(NULL, PERIODIC, TASK3_ID, (current_time + TASK3_PERIOD)); //TODO: Create this function
-//		xTaskCreate(user_defined_task_3, "dd_task_3", configMINIMAL_STACK_SIZE, (void*)created_dd_task, TASK_CREATION_PRIORITY, &(created_dd_task->t_handle));
-//
-//		// Wait for the Tasks's period before generating the task again
-//		vTaskDelay(TASK3_PERIOD);
-//	}
-//}
+static void DD_Task_Generator_3( void *pvParameters )
+{
+	printf("DD_Task_Generator_3 Started\n");
+	TickType_t current_time;
+	dd_task *created_dd_task;
+
+	while(1)
+	{
+		current_time = xTaskGetTickCount();
+
+		/* Creating the DD_Task */
+		created_dd_task = create_dd_task(NULL, PERIODIC, TASK3_ID, (current_time + TASK3_PERIOD)); //TODO: Create this function
+		xTaskCreate(user_defined_task_3, "dd_task_3", configMINIMAL_STACK_SIZE, (void*)created_dd_task, TASK_CREATION_PRIORITY, &(created_dd_task->t_handle));
+		vTaskSuspend(created_dd_task->t_handle);
+
+		printf("dd_task_generator released task!\n");
+		release_dd_task(created_dd_task);
+		// Wait for the Tasks's period before generating the task again
+		vTaskDelay(TASK3_PERIOD);
+	}
+}
 
 /*-----------------------------------------------------------*/
 
@@ -447,21 +456,145 @@ static void user_defined_task_2( void *pvParameters )
 }
 
 /*-----------------------------------------------------------*/
+
+static void user_defined_task_3( void *pvParameters )
+{
+	printf("User Defined Task 3 Started\n");
+	TaskHandle_t current_task_handle = xTaskGetCurrentTaskHandle();
+
+	if(xSemaphoreTake(xTask_Execution_Mutex, pdMS_TO_TICKS(TASK3_PERIOD)) == pdTRUE) {
+		STM_EVAL_LEDOn(red_led);
+		vTaskDelay(TASK3_EXECUTION_TIME);
+		xSemaphoreGive(xTask_Execution_Mutex);
+	}
+
+	STM_EVAL_LEDOff(red_led);
+	vTaskDelete(current_task_handle);
+}
+
+/*-----------------------------------------------------------*/
+
+static dd_task_node_t *insert_dd_task_to_other_list( dd_task task, dd_task_node_t *head ){
+	//1. Creating the dd_task_node
+	dd_task_node_t *new_node;
+	new_node = (dd_task_node_t*)pvPortMalloc(sizeof(dd_task_node_t));
+
+	if(new_node == NULL){
+		return NULL;
+	}
+
+	new_node->task = task;
+	new_node->next_task = NULL;
+
+	// 2. Insert the dd_task_node at the end of the list
+	if (head == NULL){
+		head = new_node;
+		return head;
+	}
+
+	dd_task_node_t *temp = head;
+	while (temp->next_task != NULL){
+		temp = temp->next_task;
+	}
+	temp->next_task = new_node;
+	return head;
+}
+
+/*-----------------------------------------------------------*/
+
+static dd_task_node_t *insert_dd_task_to_active_list( dd_task task, dd_task_node_t *head ) {
+	//1. Creating the dd_task_node
+	dd_task_node_t *new_node;
+	new_node = (dd_task_node_t*)pvPortMalloc(sizeof(dd_task_node_t));
+
+	if(new_node == NULL){
+		return NULL;
+	}
+
+	new_node->task = task;
+	new_node->next_task = NULL;
+
+	//2. If the list is empty, return the new node as the list
+	if (head == NULL){
+		head = new_node;
+		return head;
+	}
+
+	//3. If the new task has the earliest deadline out of all the tasks in the list
+	if (task.absolute_deadline <= head->task.absolute_deadline){
+		new_node->next_task = head;
+		head = new_node;
+		return head;
+	}
+
+	//4. Traversing the list to find the correct, sorted postion for the new node based on deadline
+	dd_task_node_t *temp = head;
+	while (temp->next_task != NULL && temp->next_task->task.absolute_deadline < task.absolute_deadline) {
+		temp = temp->next_task;
+	}
+
+	//5. Add the new node to the list
+	new_node->next_task = temp->next_task;
+	temp->next_task = new_node;
+	return head;
+}
+
+/*-----------------------------------------------------------*/
+
+static void DD_Scheduler( void *pvParameters )
+{
+	printf("DD Scheduler Started\n");
+
+	dd_task_node_t *active_tasks = NULL;
+	dd_task_node_t *completed_tasks = NULL;
+	dd_task_node_t *overdue_tasks = NULL;
+
+	request_type received_request;
+	dd_task received_dd_task;
+
+	TickType_t release_time = 0;
+
+	while(1){
+		if(xQueueReceive(request_queue, &received_request, portMAX_DELAY) == pdPASS){ //Only proceed if we received a request
+			switch(received_request){
+				case TASK_CREATED:
+					xQueueReceive(dd_task_queue, &received_dd_task, portMAX_DELAY);
+
+					release_time = xTaskGetTickCount();
+					/* TESTING CODE - Must be removed */
+//					dd_task *created_dd_task2;
+//					created_dd_task2 = create_dd_task(NULL, PERIODIC, TASK2_ID, (release_time + TASK2_PERIOD));
+//					dd_task *created_dd_task3;
+//					created_dd_task3 = create_dd_task(NULL, PERIODIC, TASK3_ID, (release_time + TASK3_PERIOD));
+//					created_dd_task2->release_time = release_time;
+//					created_dd_task3->release_time = release_time;
+					/* End of testing code */
+
+					received_dd_task.release_time = release_time;
+
+					active_tasks = insert_dd_task_to_active_list(received_dd_task, active_tasks);
+
+//					//TESTING CODE: Remove
+//					active_tasks = insert_dd_task_to_active_list(*created_dd_task2, active_tasks);
+//					active_tasks = insert_dd_task_to_active_list(*created_dd_task3, active_tasks);
 //
-//static void user_defined_task_3( void *pvParameters )
-//{
-//	printf("User Defined Task 3 Started\n");
-//	TaskHandle_t current_task_handle = xTaskGetCurrentTaskHandle();
-//
-//	if(xSemaphoreTake(xTask_Execution_Mutex, pdMS_TO_TICKS(TASK3_PERIOD)) == pdTRUE) {
-//		STM_EVAL_LEDOn(red_led);
-//		vTaskDelay(TASK3_EXECUTION_TIME);
-//		xSemaphoreGive(xTask_Execution_Mutex);
-//	}
-//
-//	STM_EVAL_LEDOff(red_led);
-//	vTaskDelete(current_task_handle);
-//}
+//					vTaskPrioritySet(received_dd_task->t_handle, tskIDLE_PRIORITY + 1); //TODO: Set task priority and resume
+//					vTaskResume(received_dd_task->task_handle);
+					break;
+				case GET_ACTIVE_LIST: //TODO: Implement
+					break;
+				case GET_COMPLETED_LIST: //TODO: Implement
+					break;
+				case GET_OVERDUE_LIST: //TODO: Implement
+					break;
+				default:
+				//Error
+					break;
+			}
+		}
+		vTaskDelay(200);
+	}
+}
 
 
 /*-----------------------------------------------------------*/
