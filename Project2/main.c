@@ -121,7 +121,7 @@ static void DD_Task_Generator_2( void *pvParameters );
 static void DD_Task_Generator_3( void *pvParameters );
 
 static dd_task_node_t *insert_dd_task_to_active_list( dd_task *task, dd_task_node_t *head);
-static dd_task_node_t *remove_earliest_deadline_dd_task( dd_task_node_t *head );
+static dd_task_node_t *remove_earliest_deadline_dd_task( dd_task_node_t **head_ref );
 static uint32_t get_list_count(dd_task_node_t *head);
 static void DD_Scheduler( void *pvParameters );
 
@@ -154,7 +154,6 @@ TaskHandle_t dd_monitor_handle = NULL;
 
 int main(void)
 {
-
 	/* Initialize LEDs needed for Project 2 */
 	STM_EVAL_LEDInit(green_led);
 	STM_EVAL_LEDInit(red_led);
@@ -189,11 +188,11 @@ int main(void)
 
 	xTaskCreate(DD_Task_Generator_1, "DD Task 1 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_1_generator_handle);
 	xTaskCreate(DD_Task_Generator_2, "DD Task 2 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_2_generator_handle);
-	//xTaskCreate(DD_Task_Generator_3, "DD Task 3 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_3_generator_handle);
+	xTaskCreate(DD_Task_Generator_3, "DD Task 3 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_3_generator_handle);
 
 	xTaskCreate(DD_Scheduler, "DD Scheduler", configMINIMAL_STACK_SIZE, NULL, DD_TASK_SCHEDULER_PRIORITY, &dd_scheduler_handle);
 
-	//xTaskCreate(DD_Monitor, "DD Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, &dd_monitor_handle);
+	xTaskCreate(DD_Monitor, "DD Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, &dd_monitor_handle);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -314,12 +313,12 @@ static void DD_Task_Generator_3( void *pvParameters )
 
 static void user_defined_task_1( void *pvParameters )
 {
-	printf("User Defined Task 1 Suspended\n");
+	//printf("User Defined Task 1 Suspended\n");
 	//Suspend Task execution (of ceiling task w/ NULL) to allow DDS to handle scheduling
 	vTaskSuspend(NULL);
 
 	//When we hit this line, we've resumed from the scheduler
-	printf("User Defined Task 1 Started\n");
+	//printf("User Defined Task 1 Started\n");
 	TickType_t completion_time = xTaskGetTickCount() + pdMS_TO_TICKS(TASK1_EXECUTION_TIME);
 
 	STM_EVAL_LEDOn(blue_led);
@@ -410,17 +409,17 @@ static dd_task_node_t *insert_dd_task_to_active_list( dd_task *task, dd_task_nod
 
 /*-----------------------------------------------------------*/
 
-static dd_task_node_t *remove_earliest_deadline_dd_task(dd_task_node_t *head) {
+static dd_task_node_t *remove_earliest_deadline_dd_task(dd_task_node_t **head_ref) {
     // Check if the list is empty
-    if (head == NULL) {
+    if (*head_ref == NULL) {
         return NULL;
     }
 
     // Store the first node
-    dd_task_node_t *earliest_deadline_dd_task_node = head;
+    dd_task_node_t *earliest_deadline_dd_task_node = *head_ref;
 
     // Update head to point to the next node
-    head = head->next_task;
+    *head_ref = earliest_deadline_dd_task_node->next_task;
 
     // Clear the next pointer of the removed node
     earliest_deadline_dd_task_node->next_task = NULL;
@@ -469,7 +468,7 @@ static void DD_Scheduler( void *pvParameters )
 					active_tasks_head = insert_dd_task_to_active_list(received_dd_task, active_tasks_head);
 					//deadline = received_dd_task->absolute_deadline; //Sanity check to make sure more than the handles are coming through
 
-					task_to_execute = remove_earliest_deadline_dd_task(active_tasks_head);
+					task_to_execute = remove_earliest_deadline_dd_task(&active_tasks_head);
 					handle = task_to_execute->task->t_handle; //Sanity check that the handle matches the released task
 					if (task_to_execute != NULL) {
 						vTaskPrioritySet(task_to_execute->task->t_handle, TASK_EXECUTION_PRIORITY);
@@ -503,7 +502,7 @@ static void DD_Scheduler( void *pvParameters )
 					break;
 			}
 		}
-		vTaskDelay(5);
+		vTaskDelay(1);
 	}
 }
 
