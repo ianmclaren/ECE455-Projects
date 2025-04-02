@@ -110,7 +110,7 @@ static void user_defined_task_1( void *pvParameters );
 static void user_defined_task_2( void *pvParameters );
 static void user_defined_task_3( void *pvParameters );
 static void complete_dd_task( uint32_t task_id );
-static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline, uint32_t release_time );
+static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline );
 
 static void DD_Task_Generator_1( void *pvParameters );
 static void DD_Task_Generator_2( void *pvParameters );
@@ -195,7 +195,7 @@ static void complete_dd_task(uint32_t task_id){
 
 /*-----------------------------------------------------------*/
 
-static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline, uint32_t release_time ){
+static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline ){
 	request_type request = TASK_CREATED;
 
 	dd_task *ddtask;
@@ -209,7 +209,7 @@ static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task
 	ddtask->type = type;
 	ddtask->task_id = task_id;
 	ddtask->absolute_deadline = absolute_deadline;
-	ddtask->release_time = release_time;
+	ddtask->release_time = xTaskGetTickCount();
 
 	//Put dd_task on queue
 	xQueueSend(dd_task_queue, ddtask, portMAX_DELAY);
@@ -234,7 +234,7 @@ static void DD_Task_Generator_1( void *pvParameters )
 		}
 
 		printf("dd_task_generator 1 released task!\n");
-		release_dd_task(dd_task_1_handle, PERIODIC, TASK1_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK1_PERIOD), xTaskGetTickCount());
+		release_dd_task(dd_task_1_handle, PERIODIC, TASK1_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK1_PERIOD));
 
 		// Wait for the Tasks's period before generating the task again
 		vTaskDelay(pdMS_TO_TICKS(TASK1_PERIOD));
@@ -258,7 +258,7 @@ static void DD_Task_Generator_2( void *pvParameters )
 		}
 
 		printf("dd_task_generator 2 released task!\n");
-		release_dd_task(dd_task_2_handle, PERIODIC, TASK2_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_PERIOD), xTaskGetTickCount());
+		release_dd_task(dd_task_2_handle, PERIODIC, TASK2_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_PERIOD));
 
 		// Wait for the Tasks's period before generating the task again
 		vTaskDelay(pdMS_TO_TICKS(TASK2_PERIOD));
@@ -282,7 +282,7 @@ static void DD_Task_Generator_3( void *pvParameters )
 		}
 
 		printf("dd_task_generator 3 released task!\n");
-		release_dd_task(dd_task_3_handle, PERIODIC, TASK3_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK3_PERIOD), xTaskGetTickCount());
+		release_dd_task(dd_task_3_handle, PERIODIC, TASK3_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK3_PERIOD));
 
 		// Wait for the Tasks's period before generating the task again
 		vTaskDelay(pdMS_TO_TICKS(TASK3_PERIOD));
@@ -448,8 +448,11 @@ static void DD_Scheduler( void *pvParameters )
 
 	request_type received_request;
 	dd_task received_dd_task;
+	dd_task dd_task;
 	uint32_t completed_dd_task_id;
 	dd_task_node_t* task_to_execute;
+
+	TaskHandle_t handle = NULL;
 
 	while(1){
 		if(xQueueReceive(request_queue, &received_request, 0) == pdPASS){ //Only proceed if we received a request
@@ -463,9 +466,10 @@ static void DD_Scheduler( void *pvParameters )
 
 					task_to_execute = remove_earliest_deadline_dd_task(active_tasks_head);
 					if (task_to_execute != NULL) {
-						vTaskPrioritySet(task_to_execute->task.t_handle, TASK_EXECUTION_PRIORITY);
+						handle = task_to_execute->task.t_handle;
+						vTaskPrioritySet(handle, TASK_EXECUTION_PRIORITY);
 						//xQueueSend(currently_executing_task_queue, &task_to_execute, portMAX_DELAY);
-						vTaskResume(task_to_execute->task.t_handle);
+						vTaskResume(handle);
 					    vPortFree(task_to_execute);  // Free memory if no longer needed. I believe this is where we want to free the memory
 					}
 
