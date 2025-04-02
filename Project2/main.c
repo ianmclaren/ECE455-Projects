@@ -130,17 +130,17 @@ static void DD_Monitor( void *pvParameters );
 
 //The three declarations below are recommended in the lab manual, but fail the build
 static uint32_t get_active_dd_task_list(void);
-static uint32_t get_complete_dd_task_list(void);
+static uint32_t get_completed_dd_task_list(void);
 static uint32_t get_overdue_dd_task_list(void);
 
 /* HANDLES */
 
 QueueHandle_t request_queue = NULL;
 QueueHandle_t dd_task_queue = NULL;
-QueueHandle_t completed_tasks_queue = NULL;
 QueueHandle_t active_task_queue = NULL;
 QueueHandle_t completed_task_queue = NULL;
 QueueHandle_t overdue_task_queue = NULL;
+QueueHandle_t executing_task_queue = NULL;
 
 TaskHandle_t dd_task_1_generator_handle = NULL;
 TaskHandle_t dd_task_2_generator_handle = NULL;
@@ -175,7 +175,7 @@ int main(void)
 	dd_task_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(dd_task) );
 
 	/* Create the queue that receives completed task ids */
-	completed_tasks_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(uint32_t) );
+	//completed_tasks_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(uint32_t) );
 
 	/* Create the queues that receive responses from the DDS for task list counts */
 	active_task_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(uint32_t));
@@ -183,14 +183,13 @@ int main(void)
 	overdue_task_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(uint32_t));
 
 	/* Create the queue used by the scheduler to place the executing dd_task */
-	//currently_executing_task_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(dd_task) );
+	executing_task_queue = xQueueCreate( mainQUEUE_LENGTH, sizeof(dd_task) );
 
 	/* Add to the registry, for the benefit of kernel aware debugging. */
 	vQueueAddToRegistry( request_queue, "RequestQueue" );
 	vQueueAddToRegistry( dd_task_queue, "DDTaskQueue" );
 	//vQueueAddToRegistry( response_queue, "ResponseQueue" );
-//	vQueueAddToRegistry( completed_tasks_queue, "CompletedQueue");
-//	vQueueAddToRegistry( currently_executing_task_queue, "ExecutingQueue");
+	vQueueAddToRegistry( executing_task_queue, "ExecutingQueue");
 
 	xTaskCreate(DD_Task_Generator_1, "DD Task 1 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_1_generator_handle);
 	//xTaskCreate(DD_Task_Generator_2, "DD Task 2 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_2_generator_handle);
@@ -198,7 +197,7 @@ int main(void)
 
 	xTaskCreate(DD_Scheduler, "DD Scheduler", configMINIMAL_STACK_SIZE, NULL, DD_TASK_SCHEDULER_PRIORITY, &dd_scheduler_handle);
 
-	xTaskCreate(DD_Monitor, "DD Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, &dd_monitor_handle);
+	//xTaskCreate(DD_Monitor, "DD Monitor", configMINIMAL_STACK_SIZE, NULL, MONITOR_PRIORITY, &dd_monitor_handle);
 
 	/* Start the tasks and timer running. */
 	vTaskStartScheduler();
@@ -209,7 +208,8 @@ int main(void)
 /*-----------------------------------------------------------*/
 
 static void complete_dd_task(uint32_t task_id){
-	xQueueSend(completed_tasks_queue, &task_id, portMAX_DELAY);
+	request_type request = TASK_COMPLETED;
+	xQueueSend(request_queue, &request, portMAX_DELAY);
 }
 
 /*-----------------------------------------------------------*/
@@ -227,6 +227,7 @@ static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task
 	ddtask->t_handle = t_handle;
 	ddtask->type = type;
 	ddtask->task_id = task_id;
+	ddtask->completion_time = 2000; //TODO: Remove or change value
 	ddtask->absolute_deadline = absolute_deadline;
 	ddtask->release_time = xTaskGetTickCount();
 
@@ -253,7 +254,7 @@ static void DD_Task_Generator_1( void *pvParameters )
 		}
 
 		//printf("dd_task_generator 1 released task!\n");
-		release_dd_task(dd_task_1_handle, PERIODIC, TASK1_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK1_PERIOD));
+		release_dd_task(dd_task_1_handle, PERIODIC, TASK1_ID, (xTaskGetTickCount() + pdMS_TO_TICKS(TASK1_PERIOD)));
 
 		// Wait for the Tasks's period before generating the task again
 		vTaskDelay(pdMS_TO_TICKS(TASK1_PERIOD));
@@ -264,7 +265,7 @@ static void DD_Task_Generator_1( void *pvParameters )
 
 static void DD_Task_Generator_2( void *pvParameters )
 {
-	printf("DD_Task_Generator_2 Started\n");
+	//printf("DD_Task_Generator_2 Started\n");
 	TaskHandle_t dd_task_2_handle = NULL;
 	BaseType_t result;
 
@@ -276,7 +277,7 @@ static void DD_Task_Generator_2( void *pvParameters )
 			printf("Failed to create dd_task_2"); //Checking to make sure the task was created
 		}
 
-		printf("dd_task_generator 2 released task!\n");
+		//printf("dd_task_generator 2 released task!\n");
 		release_dd_task(dd_task_2_handle, PERIODIC, TASK2_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_PERIOD));
 
 		// Wait for the Tasks's period before generating the task again
@@ -288,7 +289,7 @@ static void DD_Task_Generator_2( void *pvParameters )
 
 static void DD_Task_Generator_3( void *pvParameters )
 {
-	printf("DD_Task_Generator_3 Started\n");
+	//printf("DD_Task_Generator_3 Started\n");
 	TaskHandle_t dd_task_3_handle = NULL;
 	BaseType_t result;
 
@@ -300,7 +301,7 @@ static void DD_Task_Generator_3( void *pvParameters )
 			printf("Failed to create dd_task_3"); //Checking to make sure the task was created
 		}
 
-		printf("dd_task_generator 3 released task!\n");
+		//printf("dd_task_generator 3 released task!\n");
 		release_dd_task(dd_task_3_handle, PERIODIC, TASK3_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK3_PERIOD));
 
 		// Wait for the Tasks's period before generating the task again
@@ -332,12 +333,12 @@ static void user_defined_task_1( void *pvParameters )
 
 static void user_defined_task_2( void *pvParameters )
 {
-	printf("User Defined Task 2 Started\n");
+	//printf("User Defined Task 2 Started\n");
 	//Suspend Task execution (of ceiling task w/ NULL) to allow DDS to handle scheduling
 	vTaskSuspend(NULL);
 
 	//When we hit this line, we've resumed from the scheduler
-	printf("User Defined Task 2 Started\n");
+	//printf("User Defined Task 2 Started\n");
 	TickType_t completion_time = xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_EXECUTION_TIME);
 
 	STM_EVAL_LEDOn(green_led);
@@ -352,12 +353,12 @@ static void user_defined_task_2( void *pvParameters )
 
 static void user_defined_task_3( void *pvParameters )
 {
-	printf("User Defined Task 3 Started\n");
+	//printf("User Defined Task 3 Started\n");
 	//Suspend Task execution (of ceiling task w/ NULL) to allow DDS to handle scheduling
 	vTaskSuspend(NULL);
 
 	//When we hit this line, we've resumed from the scheduler
-	printf("User Defined Task 3 Started\n");
+	//printf("User Defined Task 3 Started\n");
 	TickType_t completion_time = xTaskGetTickCount() + pdMS_TO_TICKS(TASK3_EXECUTION_TIME);
 
 	STM_EVAL_LEDOn(red_led);
@@ -479,8 +480,8 @@ static void DD_Scheduler( void *pvParameters )
 
 	request_type received_request;
 	dd_task received_dd_task;
-	dd_task dd_task;
-	uint32_t completed_dd_task_id;
+//	dd_task dd_task;
+//	uint32_t completed_dd_task_id;
 	dd_task_node_t* task_to_execute;
 	uint32_t active_task_count = 0;
 	uint32_t completed_task_count = 0;
@@ -502,25 +503,24 @@ static void DD_Scheduler( void *pvParameters )
 					if (task_to_execute != NULL) {
 						handle = task_to_execute->task.t_handle;
 						vTaskPrioritySet(handle, TASK_EXECUTION_PRIORITY);
-						//xQueueSend(currently_executing_task_queue, &task_to_execute, portMAX_DELAY);
+						xQueueSend(executing_task_queue, &task_to_execute->task, portMAX_DELAY);
 						vTaskResume(handle);
-					    vPortFree(task_to_execute);  // Free memory if no longer needed. I believe this is where we want to free the memory
+					    //vPortFree(task_to_execute);  // Free memory if no longer needed. I believe this is where we want to free the memory
 					}
 
 					break;
 				case TASK_COMPLETED:
-					if(xQueueReceive(completed_tasks_queue, &completed_dd_task_id, portMAX_DELAY) != pdPASS){
+					if(xQueueReceive(executing_task_queue, &received_dd_task, portMAX_DELAY) != pdPASS){
+						printf("DDS received TASK_COMPLETED but no task found\n");
 						break;
 					}
+					received_dd_task.completion_time = xTaskGetTickCount();
 
-					//xQueueReceive(currently_executing_task_queue, &received_dd_task, portMAX_DELAY);
-					//received_dd_task.completion_time = xTaskGetTickCount();
-
-					//if(received_dd_task.completion_time < received_dd_task.absolute_deadline){ // If completed in time
-						//completed_tasks_head = insert_dd_task_to_other_list(received_dd_task, completed_tasks_head);
-					//} else { //Otherwise, task is overdue
-					//	overdue_tasks_head = insert_dd_task_to_other_list(received_dd_task, overdue_tasks_head);
-					//}
+					if(received_dd_task.completion_time < received_dd_task.absolute_deadline){ // If completed in time
+						completed_tasks_head = insert_dd_task_to_other_list(received_dd_task, completed_tasks_head);
+					} else { //Otherwise, task is overdue
+						overdue_tasks_head = insert_dd_task_to_other_list(received_dd_task, overdue_tasks_head);
+					}
 
 					break;
 				case GET_MONITOR_LISTS:
