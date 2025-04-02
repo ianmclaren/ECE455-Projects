@@ -106,7 +106,6 @@ static void prvSetupHardware( void );
 /* Defining Functions */
 /*-----------------------------------------------------------*/
 
-static dd_task* create_dd_task( TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline );
 static void user_defined_task_1( void *pvParameters );
 static void user_defined_task_2( void *pvParameters );
 static void user_defined_task_3( void *pvParameters );
@@ -177,8 +176,8 @@ int main(void)
 //	vQueueAddToRegistry( currently_executing_task_queue, "ExecutingQueue");
 
 	xTaskCreate(DD_Task_Generator_1, "DD Task 1 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_1_generator_handle);
-	//xTaskCreate(DD_Task_Generator_2, "DD Task 2 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_2_generator_handle);
-	//xTaskCreate(DD_Task_Generator_3, "DD Task 3 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_3_generator_handle);
+	xTaskCreate(DD_Task_Generator_2, "DD Task 2 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_2_generator_handle);
+	xTaskCreate(DD_Task_Generator_3, "DD Task 3 Generator", configMINIMAL_STACK_SIZE, NULL, DD_TASK_GENERATOR_PRIORITY, &dd_task_3_generator_handle);
 
 	xTaskCreate(DD_Scheduler, "DD Scheduler", configMINIMAL_STACK_SIZE, NULL, DD_TASK_SCHEDULER_PRIORITY, &dd_scheduler_handle);
 
@@ -192,24 +191,6 @@ int main(void)
 
 static void complete_dd_task(uint32_t task_id){
 	xQueueSend(completed_tasks_queue, &task_id, portMAX_DELAY);
-}
-
-/*-----------------------------------------------------------*/
-
-static dd_task* create_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task_id, uint32_t absolute_deadline){
-	dd_task *ddtask;
-	ddtask = (dd_task*)pvPortMalloc(sizeof(dd_task));
-
-	if(ddtask == NULL){
-		return NULL;
-	}
-
-	ddtask->t_handle = t_handle;
-	ddtask->type = type;
-	ddtask->task_id = task_id;
-	ddtask->absolute_deadline = absolute_deadline;
-
-	return ddtask;
 }
 
 /*-----------------------------------------------------------*/
@@ -241,20 +222,15 @@ static void release_dd_task(TaskHandle_t t_handle, task_type type, uint32_t task
 static void DD_Task_Generator_1( void *pvParameters )
 {
 	printf("DD_Task_Generator_1 Started\n");
-	TaskHandle_t dd_task_1_handle;
-//	TaskHandle_t new_dd_handle;
-//	const char* name = "Bob";
-//	int i = 0;
+	TaskHandle_t dd_task_1_handle = NULL;
 	BaseType_t result;
-
 
 	while(1)
 	{
 		/* Creating the DD_Task */
-
 		result = xTaskCreate(user_defined_task_1, "dd_task_1", configMINIMAL_STACK_SIZE, NULL, TASK_CREATION_PRIORITY, &dd_task_1_handle);
 		if (result != pdPASS) {
-			printf("Failed to create dd_task1");
+			printf("Failed to create dd_task1"); //Checking to make sure the task was created
 		}
 
 		printf("dd_task_generator 1 released task!\n");
@@ -270,20 +246,22 @@ static void DD_Task_Generator_1( void *pvParameters )
 static void DD_Task_Generator_2( void *pvParameters )
 {
 	printf("DD_Task_Generator_2 Started\n");
-	dd_task *created_dd_task;
+	TaskHandle_t dd_task_2_handle = NULL;
+	BaseType_t result;
 
 	while(1)
 	{
 		/* Creating the DD_Task */
-		created_dd_task = create_dd_task(NULL, PERIODIC, TASK2_ID, (xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_PERIOD)));
-		xTaskCreate(user_defined_task_2, "dd_task_2", configMINIMAL_STACK_SIZE, (void*)created_dd_task, TASK_CREATION_PRIORITY, &(created_dd_task->t_handle));
-		vTaskSuspend(created_dd_task->t_handle);
+		result = xTaskCreate(user_defined_task_2, "dd_task_2", configMINIMAL_STACK_SIZE, NULL, TASK_CREATION_PRIORITY, &dd_task_2_handle);
+		if (result != pdPASS) {
+			printf("Failed to create dd_task_2"); //Checking to make sure the task was created
+		}
 
 		printf("dd_task_generator 2 released task!\n");
-		//release_dd_task(created_dd_task, xTaskGetTickCount());
+		release_dd_task(dd_task_2_handle, PERIODIC, TASK2_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_PERIOD), xTaskGetTickCount());
 
 		// Wait for the Tasks's period before generating the task again
-		vTaskDelay(TASK2_PERIOD);
+		vTaskDelay(pdMS_TO_TICKS(TASK2_PERIOD));
 	}
 }
 
@@ -292,23 +270,22 @@ static void DD_Task_Generator_2( void *pvParameters )
 static void DD_Task_Generator_3( void *pvParameters )
 {
 	printf("DD_Task_Generator_3 Started\n");
-	TickType_t current_time;
-	dd_task *created_dd_task;
+	TaskHandle_t dd_task_3_handle = NULL;
+	BaseType_t result;
 
 	while(1)
 	{
-		current_time = xTaskGetTickCount();
-
 		/* Creating the DD_Task */
-		created_dd_task = create_dd_task(NULL, PERIODIC, TASK3_ID, (current_time + TASK3_PERIOD));
-		xTaskCreate(user_defined_task_3, "dd_task_3", 260, (void*)created_dd_task, TASK_CREATION_PRIORITY, &(created_dd_task->t_handle));
-		vTaskSuspend(created_dd_task->t_handle);
+		result = xTaskCreate(user_defined_task_3, "dd_task_3", configMINIMAL_STACK_SIZE, NULL, TASK_CREATION_PRIORITY, &dd_task_3_handle);
+		if (result != pdPASS) {
+			printf("Failed to create dd_task_3"); //Checking to make sure the task was created
+		}
 
 		printf("dd_task_generator 3 released task!\n");
-		//release_dd_task(created_dd_task, xTaskGetTickCount());
+		release_dd_task(dd_task_3_handle, PERIODIC, TASK3_ID, xTaskGetTickCount() + pdMS_TO_TICKS(TASK3_PERIOD), xTaskGetTickCount());
 
 		// Wait for the Tasks's period before generating the task again
-		vTaskDelay(TASK3_PERIOD);
+		vTaskDelay(pdMS_TO_TICKS(TASK3_PERIOD));
 	}
 }
 
@@ -317,7 +294,7 @@ static void DD_Task_Generator_3( void *pvParameters )
 static void user_defined_task_1( void *pvParameters )
 {
 	printf("User Defined Task 1 Suspended\n");
-	//Suspend Task execution to allow DDS to handle scheduling
+	//Suspend Task execution (of ceiling task w/ NULL) to allow DDS to handle scheduling
 	vTaskSuspend(NULL);
 
 	//When we hit this line, we've resumed from the scheduler
@@ -329,7 +306,6 @@ static void user_defined_task_1( void *pvParameters )
 	STM_EVAL_LEDOff(blue_led);
 
 	complete_dd_task(TASK1_ID);
-
 	vTaskDelete(NULL);
 }
 
@@ -338,7 +314,11 @@ static void user_defined_task_1( void *pvParameters )
 static void user_defined_task_2( void *pvParameters )
 {
 	printf("User Defined Task 2 Started\n");
-	TaskHandle_t current_task_handle = xTaskGetCurrentTaskHandle();
+	//Suspend Task execution (of ceiling task w/ NULL) to allow DDS to handle scheduling
+	vTaskSuspend(NULL);
+
+	//When we hit this line, we've resumed from the scheduler
+	printf("User Defined Task 2 Started\n");
 	TickType_t completion_time = xTaskGetTickCount() + pdMS_TO_TICKS(TASK2_EXECUTION_TIME);
 
 	STM_EVAL_LEDOn(green_led);
@@ -346,7 +326,7 @@ static void user_defined_task_2( void *pvParameters )
 	STM_EVAL_LEDOff(green_led);
 
 	complete_dd_task(TASK2_ID);
-	vTaskDelete(current_task_handle);
+	vTaskDelete(NULL);
 }
 
 /*-----------------------------------------------------------*/
@@ -354,16 +334,19 @@ static void user_defined_task_2( void *pvParameters )
 static void user_defined_task_3( void *pvParameters )
 {
 	printf("User Defined Task 3 Started\n");
-	TaskHandle_t current_task_handle = xTaskGetCurrentTaskHandle();
+	//Suspend Task execution (of ceiling task w/ NULL) to allow DDS to handle scheduling
+	vTaskSuspend(NULL);
 
-	if(xSemaphoreTake(xTaskExecutionMutex, portMAX_DELAY) == pdTRUE) {
-		STM_EVAL_LEDOn(red_led);
-		vTaskDelay(TASK3_EXECUTION_TIME);
-		STM_EVAL_LEDOff(red_led);
-		xSemaphoreGive(xTaskExecutionMutex);
-	}
+	//When we hit this line, we've resumed from the scheduler
+	printf("User Defined Task 3 Started\n");
+	TickType_t completion_time = xTaskGetTickCount() + pdMS_TO_TICKS(TASK3_EXECUTION_TIME);
 
-	vTaskSuspend(current_task_handle);
+	STM_EVAL_LEDOn(red_led);
+	while (xTaskGetTickCount() < completion_time){} // Wait until the completion time has passed
+	STM_EVAL_LEDOff(red_led);
+
+	complete_dd_task(TASK3_ID);
+	vTaskDelete(NULL);
 }
 
 /*-----------------------------------------------------------*/
@@ -514,7 +497,7 @@ static void DD_Scheduler( void *pvParameters )
 					break;
 			}
 		}
-		vTaskDelay(200);
+		vTaskDelay(5);
 	}
 }
 
